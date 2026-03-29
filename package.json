@@ -12,6 +12,7 @@
     "@ducanh2912/next-pwa": "^10.2.9",
     "clsx": "^2.1.1",
     "dexie": "^3.2.4",
+    "dexie-react-hooks": "^1.1.7",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.367.0",
     "next": "14.2.5",

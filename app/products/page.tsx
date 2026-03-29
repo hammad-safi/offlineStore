@@ -12,6 +12,7 @@ import { DEFAULT_IMAGE, formatCurrency } from '@/lib/utils';
 import { useSettings } from '@/lib/hooks/useSettings';
 
 const QRGenerator = dynamic(() => import('../../components/QRGenerator'), { ssr: false });
+const QRCodeSVG = dynamic(() => import('qrcode.react').then((m) => m.QRCodeSVG), { ssr: false });
 
 const categories = ['Biscuits', 'Chocolates', 'Beverages', 'Snacks', 'Dairy'];
 const units = ['pcs', 'kg', 'litre', 'bottle', 'pack'];
@@ -321,25 +322,33 @@ export default function ProductsPage() {
 
               <div className="space-y-5">
                 <ImageUpload value={form.image} onChange={(value) => setForm((current) => ({ ...current, image: value }))} />
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  <h3 className="mb-3 text-sm font-semibold text-slate-900">QR Label Preview</h3>
-                  <QRGenerator value={form.barcode || '0000000000'} />
-                </div>
+                {form.barcode ? (
+                  <div id="qr-preview" className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                    <h3 className="mb-3 text-sm font-semibold text-slate-900">QR Label Preview</h3>
+                    <QRGenerator value={form.barcode} />
+                  </div>
+                ) : (
+                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                    <h3 className="mb-3 text-sm font-semibold text-slate-900">QR Label Preview</h3>
+                    <p className="text-sm text-slate-500">Enter a barcode to see a QR preview.</p>
+                  </div>
+                )}
               </div>
             </form>
           </div>
         </div>
       ) : null}
 
-      <PrintWrapper title="Print Product QR Labels" printLabel="QR Labels">
+      <PrintWrapper title="Print QR Labels" printLabel="QR Labels">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {products.map((product) => (
             <div key={product.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-center">
               <div className="mb-3 grid place-items-center">
-                <img src={product.image} alt={product.name} className="h-20 w-20 rounded-3xl object-cover" />
+                <QRCodeSVG value={product.barcode || product.name} size={120} includeMargin />
               </div>
               <p className="font-semibold text-slate-900">{product.name}</p>
               <p className="text-sm text-slate-600">{formatCurrency(product.price, currency)}</p>
+              <p className="text-xs text-slate-500 mt-2">{product.barcode}</p>
             </div>
           ))}
         </div>

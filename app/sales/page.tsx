@@ -48,7 +48,21 @@ export default function SalesPage() {
   }, [products, searchQuery]);
 
   const addToCart = (product: Product) => {
+    const inventoryItem = inventory.find((item) => item.productId === product.id);
+    if (!inventoryItem || inventoryItem.quantity <= 0) {
+      setScanFeedback({ msg: `✗ ${product.name} is out of stock!`, type: 'error' });
+      setTimeout(() => setScanFeedback(null), 3000);
+      return;
+    }
+
     const existing = cart.find((item) => item.productId === product.id);
+    const nextQty = existing ? existing.qty + 1 : 1;
+    if (nextQty > inventoryItem.quantity) {
+      setScanFeedback({ msg: `✗ Only ${inventoryItem.quantity} in stock for ${product.name}.`, type: 'error' });
+      setTimeout(() => setScanFeedback(null), 3000);
+      return;
+    }
+
     if (existing) {
       setCart((current) =>
         current.map((item) =>
@@ -98,10 +112,18 @@ export default function SalesPage() {
   };
 
   const updateQty = (productId: number, qty: number) => {
+    const inventoryItem = inventory.find((item) => item.productId === productId);
+    const effectiveQty = qty < 1 ? 1 : qty;
+    if (inventoryItem && effectiveQty > inventoryItem.quantity) {
+      setScanFeedback({ msg: `✗ Cannot exceed stock of ${inventoryItem.quantity}.`, type: 'error' });
+      setTimeout(() => setScanFeedback(null), 3000);
+      return;
+    }
+
     setCart((current) =>
       current.map((item) =>
         item.productId === productId
-          ? { ...item, qty: qty < 1 ? 1 : qty, subtotal: (qty < 1 ? 1 : qty) * item.unitPrice }
+          ? { ...item, qty: effectiveQty, subtotal: effectiveQty * item.unitPrice }
           : item
       )
     );
@@ -116,7 +138,7 @@ export default function SalesPage() {
 
   const completeSale = async () => {
     if (cart.length === 0) return;
-    const saleDate = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Karachi' });
+    const saleDate = new Date().toISOString();
     const sale: Sale = {
       items: cart,
       totalAmount,
@@ -144,11 +166,7 @@ export default function SalesPage() {
         }
       })
     );
-    const updatedInventory = inventory.map((entry) => {
-      const cartItem = cart.find((item) => item.productId === entry.productId);
-      if (!cartItem) return entry;
-      return { ...entry, quantity: Math.max(0, entry.quantity - cartItem.qty), lastUpdated: new Date().toISOString() };
-    });
+    const updatedInventory = await db.inventory.toArray();
     setInventory(updatedInventory);
     setReceiptSale({ ...sale, id });
     setReceiptOpen(true);

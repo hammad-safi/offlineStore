@@ -65,7 +65,7 @@ export default function PurchasesPage() {
     };
     const id = await db.purchases.add(purchase);
     setPurchases((current) => [{ ...purchase, id }, ...current]);
-    const inventoryItem = inventory.find((item) => item.productId === selectedProduct.id);
+    const inventoryItem = await db.inventory.where('productId').equals(selectedProduct.id as number).first();
     if (inventoryItem && inventoryItem.id) {
       const updatedQuantity = inventoryItem.quantity + form.quantity;
       await db.inventory.update(inventoryItem.id, { quantity: updatedQuantity, lastUpdated: new Date().toISOString() });

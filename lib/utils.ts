@@ -10,6 +10,9 @@ export const currencyFormatter = (value: number, currency = 'Rs') => {
 
 export const formatDate = (value: string | Date) => {
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return typeof value === 'string' ? value : 'Invalid date';
+  }
   return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 };
 

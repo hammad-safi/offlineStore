@@ -1,13 +1,7 @@
 {
-  "/_not-found/page": "app/_not-found/page.js",
-  "/api/devtools-stub/route": "app/api/devtools-stub/route.js",
-  "/inventory/page": "app/inventory/page.js",
-  "/expenses/page": "app/expenses/page.js",
-  "/purchases/page": "app/purchases/page.js",
-  "/page": "app/page.js",
-  "/products/page": "app/products/page.js",
-  "/reports/page": "app/reports/page.js",
-  "/suppliers/page": "app/suppliers/page.js",
   "/sales/page": "app/sales/page.js",
-  "/settings/page": "app/settings/page.js"
+  "/page": "app/page.js",
+  "/purchases/page": "app/purchases/page.js",
+  "/inventory/page": "app/inventory/page.js",
+  "/products/page": "app/products/page.js"
 }

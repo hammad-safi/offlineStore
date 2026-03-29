@@ -1,7 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import PageHeader from '@/components/PageHeader';
 import StatsCard from '@/components/StatsCard';
 import { initDb, db, Sale, Purchase, Expense, InventoryItem, Product } from '@/lib/db';
@@ -24,16 +25,39 @@ const categoryColors: Record<string, string> = {
 };
 
 export default function DashboardPage() {
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const settings = useSettings();
   const currency = settings?.currency ?? 'Rs';
 
+  const parseDate = (value: string | Date) => {
+    try {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
+    const cleanupInvalidSaleDates = async () => {
+      await initDb();
+      const sales = await db.sales.toArray();
+      const invalidSales = sales.filter((sale) => {
+        const date = parseDate(sale.date);
+        return date === null;
+      });
+      if (invalidSales.length > 0) {
+        await Promise.all(
+          invalidSales.map((sale) =>
+            sale.id ? db.sales.update(sale.id, { date: new Date().toISOString() }) : Promise.resolve(0)
+          )
+        );
+      }
+    };
+    cleanupInvalidSaleDates();
+  }, []);
+
+  const dashboardData = useLiveQuery(
+    async () => {
       await initDb();
       const [salesData, purchaseData, expenseData, inventoryData, productsData] = await Promise.all([
         db.sales.toArray(),
@@ -42,144 +66,177 @@ export default function DashboardPage() {
         db.inventory.toArray(),
         db.products.toArray(),
       ]);
-      setSales(salesData);
-      setPurchases(purchaseData);
-      setExpenses(expenseData);
-      setInventory(inventoryData);
-      setProducts(productsData);
-    };
-    load();
-  }, []);
 
-  const today = useMemo(() => {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTomorrow = new Date(startOfToday);
-    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+      const now = new Date();
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
+      const startOfTomorrow = new Date(startOfToday);
+      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
-    return sales.filter((sale) => {
-      const saleDate = new Date(sale.date);
-      return saleDate >= startOfToday && saleDate < startOfTomorrow;
-    });
-  }, [sales]);
-
-  const salesThisMonth = useMemo(() => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    return sales.filter((sale) => {
-      const date = new Date(sale.date);
-      return date >= startOfMonth && date <= endOfMonth;
-    });
-  }, [sales]);
-
-  const purchasesThisMonth = useMemo(() => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    return purchases.filter((purchase) => {
-      const date = new Date(purchase.date);
-      return date >= startOfMonth && date <= endOfMonth;
-    });
-  }, [purchases]);
-
-  const expensesThisMonth = useMemo(() => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    return expenses.filter((expense) => {
-      const date = new Date(expense.date);
-      return date >= startOfMonth && date <= endOfMonth;
-    });
-  }, [expenses]);
-
-  const lowStockCount = useMemo(() => {
-    const purchasedProductIds = new Set(purchases.map((purchase) => purchase.productId));
-
-    return inventory.filter((item) => {
-      const hasPreviousStock = purchasedProductIds.has(item.productId);
-      return (
-        (item.quantity > 0 && item.quantity <= item.lowStockThreshold) ||
-        (item.quantity === 0 && hasPreviousStock)
-      );
-    }).length;
-  }, [inventory, purchases]);
-
-  const netProfitThisMonth = useMemo(() => {
-    return calculateNetProfit(salesThisMonth, products, expensesThisMonth);
-  }, [salesThisMonth, products, expensesThisMonth]);
-
-  const lineData = useMemo(() => {
-    const points: Record<string, number> = {};
-    for (let offset = 29; offset >= 0; offset -= 1) {
-      const date = new Date();
-      date.setDate(date.getDate() - offset);
-      points[date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })] = 0;
-    }
-    sales.forEach((sale) => {
-      const label = new Date(sale.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      if (label in points) {
-        points[label] += sale.totalAmount;
-      }
-    });
-    return Object.entries(points).map(([name, value]) => ({ name, value }));
-  }, [sales]);
-
-  const barData = useMemo(() => {
-    const months: Record<string, { revenue: number; expense: number }> = {};
-    for (let i = 0; i < 6; i += 1) {
-      const date = new Date();
-      date.setMonth(date.getMonth() - i);
-      const label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-      months[label] = { revenue: 0, expense: 0 };
-    }
-    sales.forEach((sale) => {
-      const label = new Date(sale.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-      if (months[label]) months[label].revenue += sale.totalAmount;
-    });
-    expenses.forEach((expense) => {
-      const label = new Date(expense.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-      if (months[label]) months[label].expense += expense.amount;
-    });
-    return Object.entries(months)
-      .map(([name, values]) => ({ name, ...values }))
-      .reverse();
-  }, [sales, expenses]);
-
-  const pieData = useMemo(() => {
-    const categoryTotals: Record<string, number> = {};
-    sales.forEach((sale) => {
-      sale.items.forEach((item) => {
-        const product = products.find((product) => product.id === item.productId);
-        const category = product?.category ?? 'Other';
-        categoryTotals[category] = (categoryTotals[category] || 0) + item.subtotal;
+      const todaySales = salesData.filter((sale) => {
+        const saleDate = parseDate(sale.date);
+        if (!saleDate) return false;
+        return (
+          saleDate.getDate() === startOfToday.getDate() &&
+          saleDate.getMonth() === startOfToday.getMonth() &&
+          saleDate.getFullYear() === startOfToday.getFullYear()
+        );
       });
-    });
-    return Object.entries(categoryTotals)
-      .map(([name, value]) => ({ name, value, fill: categoryColors[name] || '#0f172a' }))
-      .slice(0, 6);
-  }, [sales, products]);
 
-  const recentTransactions = useMemo(() => {
-    const salesList = sales.map((sale) => ({
-      type: 'Sale',
-      date: sale.date,
-      amount: sale.totalAmount,
-      label: `${sale.items.length} item(s)`,
-    }));
-    const purchaseList = purchases.map((purchase) => ({
-      type: 'Purchase',
-      date: purchase.date,
-      amount: purchase.totalCost,
-      label: purchase.productName,
-    }));
-    return [...salesList, ...purchaseList]
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 5);
-  }, [sales, purchases]);
+      const salesThisMonth = salesData.filter((sale) => {
+        const saleDate = parseDate(sale.date);
+        if (!saleDate) return false;
+        return (
+          saleDate.getMonth() === startOfMonth.getMonth() &&
+          saleDate.getFullYear() === startOfMonth.getFullYear()
+        );
+      });
+
+      const purchasesThisMonth = purchaseData.filter((purchase) => {
+        const purchaseDate = new Date(purchase.date);
+        return purchaseDate >= startOfMonth && purchaseDate <= endOfMonth;
+      });
+
+      const expensesThisMonth = expenseData.filter((expense) => {
+        const expenseDate = new Date(expense.date);
+        return expenseDate >= startOfMonth && expenseDate <= endOfMonth;
+      });
+
+      const purchasedProductIds = new Set(purchaseData.map((purchase) => purchase.productId));
+      const lowStockCount = inventoryData.filter((item) => {
+        const hasPreviousStock = purchasedProductIds.has(item.productId);
+        return (
+          (item.quantity > 0 && item.quantity <= item.lowStockThreshold) ||
+          (item.quantity === 0 && hasPreviousStock)
+        );
+      }).length;
+
+      const netProfitThisMonth = calculateNetProfit(salesThisMonth, productsData, expensesThisMonth);
+
+      const linePoints: Record<string, number> = {};
+      for (let offset = 29; offset >= 0; offset -= 1) {
+        const date = new Date();
+        date.setDate(date.getDate() - offset);
+        linePoints[date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })] = 0;
+      }
+      salesData.forEach((sale) => {
+        const saleDate = parseDate(sale.date);
+        if (!saleDate) return;
+        const label = saleDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (label in linePoints) {
+          linePoints[label] += sale.totalAmount;
+        }
+      });
+      const lineData = Object.entries(linePoints).map(([name, value]) => ({ name, value }));
+
+      const months: Record<string, { revenue: number; expense: number }> = {};
+      for (let i = 0; i < 6; i += 1) {
+        const date = new Date();
+        date.setMonth(date.getMonth() - i);
+        const label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        months[label] = { revenue: 0, expense: 0 };
+      }
+      salesData.forEach((sale) => {
+        const saleDate = parseDate(sale.date);
+        if (!saleDate) return;
+        const label = saleDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        if (months[label]) months[label].revenue += sale.totalAmount;
+      });
+      expenseData.forEach((expense) => {
+        const expenseDate = parseDate(expense.date);
+        if (!expenseDate) return;
+        const label = expenseDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        if (months[label]) months[label].expense += expense.amount;
+      });
+      const barData = Object.entries(months)
+        .map(([name, values]) => ({ name, ...values }))
+        .reverse();
+
+      const categoryTotals: Record<string, number> = {};
+      salesData.forEach((sale) => {
+        sale.items.forEach((item) => {
+          const product = productsData.find((product) => product.id === item.productId);
+          const category = product?.category ?? 'Other';
+          categoryTotals[category] = (categoryTotals[category] || 0) + item.subtotal;
+        });
+      });
+      const pieData = Object.entries(categoryTotals)
+        .map(([name, value]) => ({ name, value, fill: categoryColors[name] || '#0f172a' }))
+        .slice(0, 6);
+
+      const recentTransactions = [
+        ...salesData.map((sale) => ({
+          type: 'Sale' as const,
+          date: sale.date,
+          amount: sale.totalAmount,
+          label: `${sale.items.length} item(s)`,
+        })),
+        ...purchaseData.map((purchase) => ({
+          type: 'Purchase' as const,
+          date: purchase.date,
+          amount: purchase.totalCost,
+          label: purchase.productName,
+        })),
+      ]
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 5);
+
+      return {
+        salesData,
+        purchaseData,
+        expenseData,
+        inventoryData,
+        productsData,
+        todaySales,
+        salesThisMonth,
+        purchasesThisMonth,
+        expensesThisMonth,
+        lowStockCount,
+        netProfitThisMonth,
+        lineData,
+        barData,
+        pieData,
+        recentTransactions,
+      };
+    },
+    []
+  ) ?? {
+    salesData: [],
+    purchaseData: [],
+    expenseData: [],
+    inventoryData: [],
+    productsData: [],
+    todaySales: [],
+    salesThisMonth: [],
+    purchasesThisMonth: [],
+    expensesThisMonth: [],
+    lowStockCount: 0,
+    netProfitThisMonth: 0,
+    lineData: [],
+    barData: [],
+    pieData: [],
+    recentTransactions: [],
+  };
+
+  const {
+    salesData: sales,
+    purchaseData: purchases,
+    expenseData: expenses,
+    inventoryData: inventory,
+    productsData: products,
+    todaySales: today,
+    salesThisMonth,
+    purchasesThisMonth,
+    expensesThisMonth,
+    lowStockCount,
+    netProfitThisMonth,
+    lineData,
+    barData,
+    pieData,
+    recentTransactions,
+  } = dashboardData;
 
   return (
     <div className="space-y-6">
