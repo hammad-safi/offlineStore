@@ -1,0 +1,29 @@
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  html, body, #__next {
+    min-height: auto !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-page {
+    margin: 0;
+    padding: 0;
+  }
+
+  .print-table th,
+  .print-table td {
+    border: 1px solid #111 !important;
+    padding: 8px !important;
+  }
+}
