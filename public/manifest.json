@@ -2,11 +2,14 @@
   "name": "Shop ERP",
   "short_name": "ShopERP",
   "description": "Offline shop ERP with inventory, sales, purchases, and reports.",
-  "start_url": ".",
+  "lang": "en-US",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#3b82f6",
+  "orientation": "portrait",
+  "categories": ["business", "productivity"],
   "icons": [
     {
       "src": "/icons/icon-192x192.png",
