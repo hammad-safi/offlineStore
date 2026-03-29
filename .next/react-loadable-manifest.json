@@ -1,14 +1,15 @@
 {
   "app\\page.tsx -> ../components/DashboardCharts": {
-    "id": "app\\page.tsx -> ../components/DashboardCharts",
+    "id": 4069,
     "files": [
-      "static/chunks/_app-pages-browser_components_DashboardCharts_tsx.js"
+      "static/chunks/217.81177c61f2638da8.js",
+      "static/chunks/69.ae5bb19c43b40156.js"
     ]
   },
   "app\\products\\page.tsx -> ../../components/QRGenerator": {
-    "id": "app\\products\\page.tsx -> ../../components/QRGenerator",
+    "id": 38036,
     "files": [
-      "static/chunks/_app-pages-browser_components_QRGenerator_tsx.js"
+      "static/chunks/36.6e637bb5e3c12034.js"
     ]
   }
 }
