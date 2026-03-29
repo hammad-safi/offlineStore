@@ -9,12 +9,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ducanh2912/next-pwa": "^10.2.9",
     "clsx": "^2.1.1",
     "dexie": "^3.2.4",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.367.0",
     "next": "14.2.5",
-    "@ducanh2912/next-pwa": "^10.2.9",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
