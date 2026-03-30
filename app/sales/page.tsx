@@ -12,6 +12,11 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 const paymentMethods = ['Cash', 'Card', 'Other'];
 
+interface SaleWithMeta extends Sale {
+  studentName: string;
+  hasReturn: boolean;
+}
+
 export default function SalesPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -29,6 +34,164 @@ export default function SalesPage() {
   const [receiptStudent, setReceiptStudent] = useState<Student | null>(null);
   const [receiptAmountPaid, setReceiptAmountPaid] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
+
+  const [fromDate, setFromDate] = useState(() => new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().substring(0, 10));
+  const [toDate, setToDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [salesTick, setSalesTick] = useState(0);
+  const [viewSale, setViewSale] = useState<SaleWithMeta | null>(null);
+  const [returnSale, setReturnSale] = useState<SaleWithMeta | null>(null);
+  const [returnItems, setReturnItems] = useState<Array<{ selected: boolean; qty: number }>>([]);
+  const [returnReason, setReturnReason] = useState('Customer changed mind');
+  const [refundMethod, setRefundMethod] = useState<'cash' | 'credit'>('cash');
+
+  const salesList = useLiveQuery<SaleWithMeta[]>(async () => {
+    const sales = await db.sales.toArray();
+    const students = await db.students.toArray();
+    const returns = await db.salesReturns.toArray().catch(() => []);
+
+    const from = new Date(`${fromDate}T00:00:00`);
+    const to = new Date(`${toDate}T23:59:59.999`);
+
+    return sales
+      .filter((s) => {
+        const d = new Date(s.date);
+        return d >= from && d <= to;
+      })
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .map((sale) => ({
+        ...sale,
+        studentName: students.find((s) => s.id === sale.studentId)?.name ?? 'Walk-in',
+        hasReturn: returns.some((r: any) => r.originalSaleId === sale.id),
+      })) as SaleWithMeta[];
+  }, [fromDate, toDate, receiptSale, salesTick]);
+
+  const printSalesReport = () => {
+    const total = salesList?.reduce((s, x) => s + x.totalAmount, 0) ?? 0;
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`
+      <html>
+        <head>
+          <title>Sales Report</title>
+          <style>
+            body { font-family: Arial; padding: 20px; }
+            h2 { text-align: center; }
+            table { width: 100%; border-collapse: collapse; }
+            th { background: #333; color: white; padding: 8px; }
+            td { padding: 6px 8px; border-bottom: 1px solid #eee; }
+            .total { font-weight: bold; font-size: 16px; }
+            @media print { body { padding: 5px; } }
+          </style>
+        </head>
+        <body>
+          <h2>Sales Report</h2>
+          <p style="text-align:center">${fromDate} to ${toDate}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Items</th>
+                <th>Customer</th>
+                <th>Payment</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${salesList?.map((s) => `
+                <tr>
+                  <td>${new Date(s.date).toLocaleDateString()}</td>
+                  <td>${s.items?.length ?? 0} item(s)</td>
+                  <td>${s.studentName}</td>
+                  <td>${s.paymentMethod}</td>
+                  <td>Rs ${s.totalAmount.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+              <tr class="total">
+                <td colspan="4">TOTAL</td>
+                <td>Rs ${total.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <script>window.onload = () => window.print()</script>
+        </body>
+      </html>
+    `);
+    w.document.close();
+  };
+
+  const updateReturnItem = (index: number, field: 'selected' | 'qty', value: boolean | number) => {
+    setReturnItems((current) => {
+      const next = [...current];
+      if (!next[index]) next[index] = { selected: false, qty: 1 };
+      next[index] = { ...next[index], [field]: value } as any;
+      return next;
+    });
+  };
+
+  const calculateRefundAmount = () => {
+    if (!returnSale) return 0;
+    return returnSale.items.reduce((sum, item, idx) => {
+      const r = returnItems[idx];
+      if (!r || !r.selected) return sum;
+      const qty = Math.min(item.qty, Math.max(1, r.qty));
+      return sum + qty * item.unitPrice;
+    }, 0);
+  };
+
+  const processReturn = async () => {
+    if (!returnSale) return;
+
+    const selectedItems = returnSale.items.filter((_, idx) => returnItems[idx]?.selected);
+    if (selectedItems.length === 0) {
+      alert('Select at least one item to return.');
+      return;
+    }
+
+    for (const item of selectedItems) {
+      const idx = returnSale.items.findIndex((i) => i.productId === item.productId);
+      const returnQty = returnItems[idx]?.qty ?? 1;
+      const qty = Math.min(item.qty, Math.max(1, returnQty));
+      const refundAmt = qty * item.unitPrice;
+
+      await db.salesReturns.add({
+        originalSaleId: returnSale.id,
+        productId: item.productId,
+        productName: item.productName,
+        quantity: qty,
+        refundAmount: refundAmt,
+        reason: returnReason,
+        refundMethod,
+        studentId: returnSale.studentId ?? null,
+        date: new Date().toISOString(),
+      });
+
+      const inv = await db.inventory.where('productId').equals(item.productId).first();
+      if (inv && inv.id) {
+        await db.inventory.update(inv.id, {
+          quantity: inv.quantity + qty,
+          lastUpdated: new Date().toISOString(),
+        });
+      }
+
+      if (refundMethod === 'credit' && returnSale.studentId) {
+        await db.studentLedger.add({
+          studentId: returnSale.studentId,
+          type: 'payment',
+          amount: refundAmt,
+          description: `Return credit: ${item.productName}`,
+          date: new Date().toISOString(),
+        });
+      }
+    }
+
+    await initDb();
+    setReturnSale(null);
+    setReturnItems([]);
+    setReturnReason('Customer changed mind');
+    setRefundMethod('cash');
+    setSalesTick((n) => n + 1);
+    alert('Return processed successfully!');
+  };
   const receiptRef = useRef<HTMLDivElement | null>(null);
   const barcodeRef = useRef<HTMLInputElement | null>(null);
   const [barcodeValue, setBarcodeValue] = useState('');
@@ -245,6 +408,7 @@ export default function SalesPage() {
     setStudentBalance(null);
     setDiscount(0);
     setPaymentMethod('Cash');
+    setSalesTick((n) => n + 1);
   };
 
   const printReceipt = useReactToPrint({ contentRef: receiptRef as any });
@@ -580,6 +744,224 @@ export default function SalesPage() {
           </div>
         </section>
       </div>
+
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-panel">
+        <div className="flex gap-3 mb-4 items-center">
+          <div>
+            <label className="text-xs text-gray-500">From</label>
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">To</label>
+            <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div className="flex gap-2 ml-auto">
+            <button onClick={printSalesReport}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm">
+              🖨 Print Sales Report
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b bg-gray-50 text-gray-600">
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Items</th>
+                <th className="px-4 py-3">Customer</th>
+                <th className="px-4 py-3">Total</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {salesList?.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-gray-500">No sales found</td>
+                </tr>
+              ) : (
+                salesList?.map((sale) => (
+                  <tr key={sale.id} className="border-b hover:bg-gray-50">
+                    <td className="py-3 px-4 text-sm">
+                      {new Date(sale.date).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="py-3 px-4 text-sm">
+                      {sale.items?.length ?? 0} item(s)
+                      <br />
+                      <span className="text-xs text-gray-400">
+                        {sale.items?.map((item) => item.productName).join(', ')}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-sm">{sale.studentName}</td>
+                    <td className="py-3 px-4 text-sm font-medium">{formatCurrency(sale.totalAmount, currency)}</td>
+                    <td className="py-3 px-4">
+                      <div className="flex gap-2">
+                        <button onClick={() => setViewSale(sale)}
+                          className="text-blue-600 text-xs border border-blue-200 px-2 py-1 rounded hover:bg-blue-50">
+                          👁 View
+                        </button>
+                        {!sale.hasReturn ? (
+                          <button onClick={() => {
+                            setReturnSale(sale);
+                            setReturnItems(sale.items.map(item => ({ selected: false, qty: 1 })));
+                          }}
+                            className="text-red-600 text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50">
+                            ↩ Return
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-400 px-2 py-1">Returned</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {viewSale && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md">
+            <h3 className="font-bold text-lg mb-4">Sale Details</h3>
+            <div className="space-y-2 mb-4">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Date:</span>
+                <span>{new Date(viewSale.date).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Customer:</span>
+                <span>{viewSale.studentName}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Payment:</span>
+                <span>{viewSale.paymentMethod}</span>
+              </div>
+            </div>
+            <table className="w-full text-sm mb-4">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="text-left p-2">Product</th>
+                  <th className="text-right p-2">Qty</th>
+                  <th className="text-right p-2">Price</th>
+                  <th className="text-right p-2">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {viewSale.items?.map((item, i) => (
+                  <tr key={i} className="border-b">
+                    <td className="p-2">{item.productName}</td>
+                    <td className="p-2 text-right">{item.qty}</td>
+                    <td className="p-2 text-right">{formatCurrency(item.unitPrice, currency)}</td>
+                    <td className="p-2 text-right">{formatCurrency(item.subtotal, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex justify-between font-bold border-t pt-2">
+              <span>Total</span>
+              <span>{formatCurrency(viewSale.totalAmount, currency)}</span>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => printReceipt()}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm">
+                🖨 Print Receipt
+              </button>
+              <button onClick={() => setViewSale(null)}
+                className="flex-1 border py-2 rounded-lg text-sm">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {returnSale && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg">
+            <h3 className="font-bold text-lg mb-1">Process Return</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Original Sale: {new Date(returnSale.date).toLocaleDateString()} — {formatCurrency(returnSale.totalAmount, currency)}
+            </p>
+            <p className="text-sm font-medium mb-2">Select items to return:</p>
+            {returnSale.items?.map((item, i) => (
+              <div key={i} className="flex items-center gap-3 p-3 border rounded-lg mb-2">
+                <input
+                  type="checkbox"
+                  checked={returnItems[i]?.selected ?? false}
+                  onChange={e => updateReturnItem(i, 'selected', e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <div className="flex-1">
+                  <p className="text-sm font-medium">{item.productName}</p>
+                  <p className="text-xs text-gray-400">Original: {item.qty} × {formatCurrency(item.unitPrice, currency)}</p>
+                </div>
+                {returnItems[i]?.selected && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500">Qty:</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={item.qty}
+                      value={returnItems[i]?.qty ?? 1}
+                      onChange={e => updateReturnItem(i, 'qty', Number(e.target.value))}
+                      className="w-16 border rounded px-2 py-1 text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+            <div className="mt-3">
+              <label className="text-sm font-medium">Return Reason</label>
+              <select
+                value={returnReason}
+                onChange={e => setReturnReason(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+              >
+                <option>Damaged product</option>
+                <option>Wrong item</option>
+                <option>Customer changed mind</option>
+                <option>Expired product</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div className="mt-3">
+              <label className="text-sm font-medium">Refund Method</label>
+              <select
+                value={refundMethod}
+                onChange={e => setRefundMethod(e.target.value as 'cash' | 'credit')}
+                className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+              >
+                <option value="cash">Cash Refund</option>
+                <option value="credit">Credit to Account</option>
+              </select>
+            </div>
+            <div className="mt-3 bg-gray-50 rounded-lg p-3">
+              <div className="flex justify-between text-sm">
+                <span>Refund Amount:</span>
+                <span className="font-bold text-green-600">{formatCurrency(calculateRefundAmount(), currency)}</span>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={processReturn}
+                className="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-medium"
+              >
+                ↩ Process Return
+              </button>
+              <button
+                onClick={() => setReturnSale(null)}
+                className="flex-1 border py-2 rounded-lg text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {receiptOpen && receiptSale ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/40 px-4 py-10">

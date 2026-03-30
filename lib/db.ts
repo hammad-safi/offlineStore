@@ -91,6 +91,19 @@ export interface StudentLedger {
   date: string;
 }
 
+export interface SaleReturn {
+  id?: number;
+  originalSaleId?: number;
+  productId: number;
+  productName: string;
+  quantity: number;
+  refundAmount: number;
+  reason: string;
+  refundMethod: 'cash' | 'credit';
+  studentId?: number | null;
+  date: string;
+}
+
 export interface Setting {
   key: string;
   value: string;
@@ -105,6 +118,7 @@ class ShopDB extends Dexie {
   expenses!: Table<Expense, number>;
   students!: Table<Student, number>;
   studentLedger!: Table<StudentLedger, number>;
+  salesReturns!: Table<SaleReturn, number>;
   settings!: Table<Setting, string>;
 
   constructor() {
@@ -118,6 +132,19 @@ class ShopDB extends Dexie {
       expenses: '++id,title,amount,category,date',
       students: '++id, name, fatherName, rollNumber, phone, fatherPhone, class, address, createdAt',
       studentLedger: '++id, studentId, type, amount, description, date',
+      settings: 'key',
+    });
+
+    this.version(4).stores({
+      products: '++id,name,category,barcode,price,costPrice,unit,createdAt',
+      inventory: '++id,productId,quantity,lowStockThreshold,lastUpdated',
+      purchases: '++id,productId,productName,quantity,costPrice,totalCost,supplier,date',
+      sales: '++id,date,totalAmount,discount,paymentMethod,studentId',
+      suppliers: '++id,name,phone,email,address,createdAt',
+      expenses: '++id,title,amount,category,date',
+      students: '++id, name, fatherName, rollNumber, phone, fatherPhone, class, address, createdAt',
+      studentLedger: '++id, studentId, type, amount, description, date',
+      salesReturns: '++id, originalSaleId, productId, productName, quantity, refundAmount, reason, refundMethod, studentId, date',
       settings: 'key',
     });
   }
@@ -175,13 +202,15 @@ export async function initDb() {
 }
 
 export async function exportDatabase() {
-  const [products, inventory, purchases, sales, suppliers, expenses, settings] = await Promise.all([
+  const [products, inventory, purchases, sales, suppliers, expenses, studentLedger, salesReturns, settings] = await Promise.all([
     db.products.toArray(),
     db.inventory.toArray(),
     db.purchases.toArray(),
     db.sales.toArray(),
     db.suppliers.toArray(),
     db.expenses.toArray(),
+    db.studentLedger.toArray(),
+    db.salesReturns.toArray(),
     db.settings.toArray(),
   ]);
 
@@ -192,6 +221,8 @@ export async function exportDatabase() {
     sales,
     suppliers,
     expenses,
+    studentLedger,
+    salesReturns,
     settings,
   };
 }
