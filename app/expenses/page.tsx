@@ -12,7 +12,7 @@ const categories = ['Rent', 'Utilities', 'Transport', 'Other'];
 
 export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [form, setForm] = useState({ title: '', amount: 0, category: 'Other', date: new Date().toISOString().slice(0, 10), note: '' });
+  const [form, setForm] = useState({ title: '', amount: '', category: 'Other', date: new Date().toISOString().slice(0, 10), note: '' });
   const settings = useSettings();
   const currency = settings?.currency ?? 'Rs';
   const [filterCategory, setFilterCategory] = useState('All');
@@ -31,16 +31,22 @@ export default function ExpensesPage() {
 
   const saveExpense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const amount = Number(form.amount);
+    if (Number.isNaN(amount) || amount < 0) {
+      alert('Enter a valid expense amount');
+      return;
+    }
+
     const expense: Expense = {
       title: form.title,
-      amount: form.amount,
+      amount,
       category: form.category,
       date: new Date(form.date).toISOString(),
       note: form.note,
     };
     const id = await db.expenses.add(expense);
     setExpenses((current) => [{ ...expense, id }, ...current]);
-    setForm({ title: '', amount: 0, category: 'Other', date: new Date().toISOString().slice(0, 10), note: '' });
+    setForm({ title: '', amount: '', category: 'Other', date: new Date().toISOString().slice(0, 10), note: '' });
   };
 
   const totalExpenses = filtered.reduce((acc, item) => acc + item.amount, 0);
@@ -77,7 +83,7 @@ export default function ExpensesPage() {
                   min={0}
                   step="0.01"
                   value={form.amount}
-                  onChange={(event) => setForm((current) => ({ ...current, amount: Number(event.target.value) }))}
+                  onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-brand-500"
                   required
                 />
