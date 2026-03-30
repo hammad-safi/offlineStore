@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Plus, Edit3, Trash2, Printer, Search } from 'lucide-react';
+import { Plus, Edit3, Trash2, Search } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import ImageUpload from '@/components/ImageUpload';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -11,7 +11,6 @@ import { initDb, db, Product, InventoryItem } from '@/lib/db';
 import { DEFAULT_IMAGE, formatCurrency } from '@/lib/utils';
 import { useSettings } from '@/lib/hooks/useSettings';
 
-const QRGenerator = dynamic(() => import('../../components/QRGenerator'), { ssr: false });
 const QRCodeSVG = dynamic(() => import('qrcode.react').then((m) => m.QRCodeSVG), { ssr: false });
 
 const categories = ['Biscuits', 'Chocolates', 'Beverages', 'Snacks', 'Dairy'];
@@ -26,6 +25,7 @@ export default function ProductsPage() {
   const [openForm, setOpenForm] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tempPreviewBarcode, setTempPreviewBarcode] = useState('');
   const [form, setForm] = useState<Product>({
     name: '',
     category: 'Biscuits',
@@ -61,6 +61,7 @@ export default function ProductsPage() {
 
   const openNewProduct = () => {
     setSelectedProduct(null);
+    setTempPreviewBarcode(`SHOP-TEMP-${Date.now()}`);
     setForm({
       name: '',
       category: 'Biscuits',
@@ -77,6 +78,7 @@ export default function ProductsPage() {
 
   const openEditProduct = (product: Product) => {
     setSelectedProduct(product);
+    setTempPreviewBarcode(product.barcode?.trim() || `SHOP-TEMP-${Date.now()}`);
     setForm(product);
     setOpenForm(true);
   };
@@ -86,15 +88,30 @@ export default function ProductsPage() {
     if (!form.name || !form.category) return;
 
     const barcodeValue = form.barcode?.trim() ?? '';
-    const productData = { ...form, barcode: barcodeValue };
+    const shouldGenerateBarcode = !barcodeValue && !selectedProduct?.barcode;
+    let finalBarcode = barcodeValue || selectedProduct?.barcode || '';
+    const productData = { ...form, barcode: finalBarcode };
 
     if (selectedProduct?.id) {
       await db.products.update(selectedProduct.id, productData);
-      setProducts((current) => current.map((item) => (item.id === selectedProduct.id ? { ...item, ...productData } : item)));
+      if (shouldGenerateBarcode) {
+        finalBarcode = `SHOP-${selectedProduct.id}-${Date.now()}`;
+        await db.products.update(selectedProduct.id, { barcode: finalBarcode });
+      }
+      setProducts((current) =>
+        current.map((item) =>
+          item.id === selectedProduct.id ? { ...item, ...productData, barcode: finalBarcode } : item
+        )
+      );
     } else {
       const id = await db.products.add({ ...productData, createdAt: new Date().toISOString() });
+      let savedBarcode = finalBarcode;
+      if (shouldGenerateBarcode) {
+        savedBarcode = `SHOP-${id}-${Date.now()}`;
+        await db.products.update(id, { barcode: savedBarcode });
+      }
       await db.inventory.add({ productId: id as number, quantity: 0, lowStockThreshold: 10, lastUpdated: new Date().toISOString() });
-      setProducts((current) => [...current, { ...(productData as Product), id }]);
+      setProducts((current) => [...current, { ...(productData as Product), id, barcode: savedBarcode }]);
     }
     setOpenForm(false);
   };
@@ -322,17 +339,99 @@ export default function ProductsPage() {
 
               <div className="space-y-5">
                 <ImageUpload value={form.image} onChange={(value) => setForm((current) => ({ ...current, image: value }))} />
-                {form.barcode ? (
-                  <div id="qr-preview" className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <h3 className="mb-3 text-sm font-semibold text-slate-900">QR Label Preview</h3>
-                    <QRGenerator value={form.barcode} />
+                <div className="border rounded-xl p-4 bg-gray-50">
+                  <p className="text-sm font-semibold mb-3">QR Code Preview</p>
+
+                  <div className="flex flex-col items-center gap-2 bg-white p-4 rounded-lg border">
+                    <div id="product-qr">
+                      <QRCodeSVG value={form.barcode?.trim() || tempPreviewBarcode} size={160} includeMargin={true} />
+                    </div>
+                    <p className="text-xs font-bold text-center">{form.name || 'Product Name'}</p>
+                    <p className="text-xs text-gray-500">{currency} {form.price?.toFixed(2) ?? '0.00'}</p>
+                    <p className="text-xs text-gray-400">{form.barcode?.trim() || tempPreviewBarcode}</p>
                   </div>
-                ) : (
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <h3 className="mb-3 text-sm font-semibold text-slate-900">QR Label Preview</h3>
-                    <p className="text-sm text-slate-500">Enter a barcode to see a QR preview.</p>
+
+                  {!form.barcode?.trim() ? (
+                    <div className="mt-2 bg-yellow-50 border border-yellow-200 rounded-lg p-2">
+                      <p className="text-xs text-yellow-700">
+                        ⚠️ No barcode entered. A unique QR will be auto-generated when you save. Print and stick it on the product.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const svg = document.getElementById('product-qr')?.querySelector('svg');
+                        if (!svg) return;
+                        const svgData = new XMLSerializer().serializeToString(svg);
+                        const blob = new Blob([svgData], { type: 'image/svg+xml' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${form.name || 'product'}-qr.svg`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="flex-1 border border-blue-600 text-blue-600 rounded-lg py-2 text-xs font-medium hover:bg-blue-50"
+                    >
+                      ⬇ Download QR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const svg = document.getElementById('product-qr')?.querySelector('svg');
+                        if (!svg) return;
+                        const svgData = new XMLSerializer().serializeToString(svg);
+                        const w = window.open('', '_blank');
+                        if (!w) return;
+                        w.document.write(`
+                          <html>
+                            <head>
+                              <title>QR Label - ${form.name || 'Product'}</title>
+                              <style>
+                                body { 
+                                  display: flex; 
+                                  flex-direction: column;
+                                  align-items: center; 
+                                  justify-content: center;
+                                  padding: 20px;
+                                  font-family: Arial, sans-serif;
+                                }
+                                .label {
+                                  border: 1px solid #ccc;
+                                  padding: 15px;
+                                  text-align: center;
+                                  width: 220px;
+                                }
+                                svg { width: 160px; height: 160px; }
+                                .name { font-weight: bold; font-size: 14px; margin: 8px 0 4px; }
+                                .price { font-size: 12px; color: #666; margin: 0; }
+                                .barcode { font-size: 10px; color: #999; margin-top: 4px; }
+                                @media print {
+                                  body { margin: 0; }
+                                }
+                              </style>
+                            </head>
+                            <body>
+                              <div class="label">
+                                ${svgData}
+                                <p class="name">${form.name || 'Product'}</p>
+                                <p class="price">${currency} ${form.price?.toFixed(2) ?? '0.00'}</p>
+                                <p class="barcode">${form.barcode?.trim() || tempPreviewBarcode}</p>
+                              </div>
+                              <script>window.onload = () => { window.print(); window.close(); }</script>
+                            </body>
+                          </html>
+                        `);
+                      }}
+                      className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-xs font-medium hover:bg-blue-700"
+                    >
+                      🖨 Print QR
+                    </button>
                   </div>
-                )}
+                </div>
               </div>
             </form>
           </div>

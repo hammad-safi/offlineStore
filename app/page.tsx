@@ -59,12 +59,14 @@ export default function DashboardPage() {
   const dashboardData = useLiveQuery(
     async () => {
       await initDb();
-      const [salesData, purchaseData, expenseData, inventoryData, productsData] = await Promise.all([
+      const [salesData, purchaseData, expenseData, inventoryData, productsData, studentsData, studentLedgerData] = await Promise.all([
         db.sales.toArray(),
         db.purchases.toArray(),
         db.expenses.toArray(),
         db.inventory.toArray(),
         db.products.toArray(),
+        db.students.toArray(),
+        db.studentLedger.toArray(),
       ]);
 
       const now = new Date();
@@ -183,12 +185,35 @@ export default function DashboardPage() {
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .slice(0, 5);
 
+      // Calculate student balances
+      const studentBalances = studentsData.map(student => {
+        const ledger = studentLedgerData.filter(e => e.studentId === student.id);
+        const totalCharged = ledger
+          .filter(e => e.type === 'charge' || e.type === 'purchase')
+          .reduce((sum, e) => sum + e.amount, 0);
+        const totalPaid = ledger
+          .filter(e => e.type === 'payment')
+          .reduce((sum, e) => sum + e.amount, 0);
+        return {
+          studentId: student.id,
+          balance: totalCharged - totalPaid
+        };
+      });
+
+      const totalStudentBalance = studentBalances
+        .filter(s => s.balance > 0)
+        .reduce((sum, s) => sum + s.balance, 0);
+
+      const studentsWithBalance = studentBalances.filter(s => s.balance > 0).length;
+
       return {
         salesData,
         purchaseData,
         expenseData,
         inventoryData,
         productsData,
+        studentsData,
+        studentLedgerData,
         todaySales,
         salesThisMonth,
         purchasesThisMonth,
@@ -199,6 +224,8 @@ export default function DashboardPage() {
         barData,
         pieData,
         recentTransactions,
+        totalStudentBalance,
+        studentsWithBalance,
       };
     },
     []
@@ -208,6 +235,8 @@ export default function DashboardPage() {
     expenseData: [],
     inventoryData: [],
     productsData: [],
+    studentsData: [],
+    studentLedgerData: [],
     todaySales: [],
     salesThisMonth: [],
     purchasesThisMonth: [],
@@ -218,6 +247,8 @@ export default function DashboardPage() {
     barData: [],
     pieData: [],
     recentTransactions: [],
+    totalStudentBalance: 0,
+    studentsWithBalance: 0,
   };
 
   const {
@@ -226,7 +257,9 @@ export default function DashboardPage() {
     expenseData: expenses,
     inventoryData: inventory,
     productsData: products,
-    todaySales: today,
+    studentsData: students,
+    studentLedgerData: studentLedger,
+    todaySales,
     salesThisMonth,
     purchasesThisMonth,
     expensesThisMonth,
@@ -236,18 +269,21 @@ export default function DashboardPage() {
     barData,
     pieData,
     recentTransactions,
+    totalStudentBalance,
+    studentsWithBalance,
   } = dashboardData;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Dashboard" description="Revenue overview and live inventory insights" />
       <div className="grid gap-4 md:grid-cols-3">
-        <StatsCard title="Sales Today" value={formatCurrency(today.reduce((acc, sale) => acc + sale.totalAmount, 0), currency)} description={`${today.length} transaction(s)`} />
+        <StatsCard title="Sales Today" value={formatCurrency(todaySales.reduce((acc, sale) => acc + sale.totalAmount, 0), currency)} description={`${todaySales.length} transaction(s)`} />
         <StatsCard title="Sales This Month" value={formatCurrency(salesThisMonth.reduce((acc, sale) => acc + sale.totalAmount, 0), currency)} description={`${salesThisMonth.length} sales recorded`} />
         <StatsCard title="Purchases This Month" value={formatCurrency(purchasesThisMonth.reduce((acc, purchase) => acc + purchase.totalCost, 0), currency)} description={`${purchasesThisMonth.length} restocks`} />
         <StatsCard title="Net Profit" value={formatCurrency(netProfitThisMonth, currency)} description="Revenue minus cost and expenses" />
         <StatsCard title="Low Stock Alerts" value={`${lowStockCount}`} description="Products under threshold" />
         <StatsCard title="Total Products" value={`${products.length}`} description="Active product SKUs" />
+        <StatsCard title="Student Balances" value={formatCurrency(totalStudentBalance, currency)} description={`${studentsWithBalance} students owe money`} />
       </div>
 
       <DashboardCharts lineData={lineData} barData={barData} pieData={pieData} currency={currency} />

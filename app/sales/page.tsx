@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Search, Trash2, Printer, CheckCircle } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import { initDb, db, Product, SaleItem, Sale, InventoryItem } from '@/lib/db';
+import { initDb, db, Product, SaleItem, Sale, InventoryItem, Student, StudentLedger } from '@/lib/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { useSettings } from '@/lib/hooks/useSettings';
 import { useReactToPrint } from 'react-to-print';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 const paymentMethods = ['Cash', 'Card', 'Other'];
 
@@ -18,8 +19,15 @@ export default function SalesPage() {
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [studentSearch, setStudentSearch] = useState('');
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [showStudentDropdown, setShowStudentDropdown] = useState(false);
+  const [amountPaying, setAmountPaying] = useState(0);
+  const [studentBalance, setStudentBalance] = useState<{charged: number, paid: number, balance: number} | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptSale, setReceiptSale] = useState<Sale | null>(null);
+  const [receiptStudent, setReceiptStudent] = useState<Student | null>(null);
+  const [receiptAmountPaid, setReceiptAmountPaid] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
   const receiptRef = useRef<HTMLDivElement | null>(null);
   const barcodeRef = useRef<HTMLInputElement | null>(null);
@@ -31,7 +39,10 @@ export default function SalesPage() {
   useEffect(() => {
     const load = async () => {
       await initDb();
-      const [productData, inventoryData] = await Promise.all([db.products.toArray(), db.inventory.toArray()]);
+      const [productData, inventoryData] = await Promise.all([
+        db.products.toArray(),
+        db.inventory.toArray()
+      ]);
       setProducts(productData);
       setInventory(inventoryData);
     };
@@ -46,6 +57,36 @@ export default function SalesPage() {
     const term = searchQuery.toLowerCase();
     return products.filter((product) => product.name.toLowerCase().includes(term) || product.barcode.toLowerCase().includes(term));
   }, [products, searchQuery]);
+
+  const studentResults = useLiveQuery(async () => {
+    if (!studentSearch || studentSearch.length < 1) return [];
+    const all = await db.students.toArray();
+    const q = studentSearch.toLowerCase();
+    return all.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.rollNumber.toLowerCase().includes(q) ||
+      s.fatherName.toLowerCase().includes(q)
+    ).slice(0, 5);
+  }, [studentSearch]);
+
+  useEffect(() => {
+    const loadBalance = async () => {
+      if (!selectedStudent?.id) {
+        setStudentBalance(null);
+        return;
+      }
+      const ledger = await db.studentLedger
+        .where('studentId').equals(selectedStudent.id).toArray();
+      const charged = ledger
+        .filter(e => e.type !== 'payment')
+        .reduce((sum, e) => sum + e.amount, 0);
+      const paid = ledger
+        .filter(e => e.type === 'payment')
+        .reduce((sum, e) => sum + e.amount, 0);
+      setStudentBalance({ charged, paid, balance: charged - paid });
+    };
+    loadBalance();
+  }, [selectedStudent?.id]);
 
   const addToCart = (product: Product) => {
     const inventoryItem = inventory.find((item) => item.productId === product.id);
@@ -143,7 +184,8 @@ export default function SalesPage() {
       items: cart,
       totalAmount,
       discount,
-      paymentMethod,
+      paymentMethod: selectedStudent ? 'student_account' : paymentMethod,
+      studentId: selectedStudent?.id ?? null,
       date: saleDate,
     };
     const id = await db.sales.add(sale);
@@ -168,9 +210,39 @@ export default function SalesPage() {
     );
     const updatedInventory = await db.inventory.toArray();
     setInventory(updatedInventory);
+
+    // If student selected
+    if (selectedStudent) {
+      // Record the full purchase as charge
+      await db.studentLedger.add({
+        studentId: selectedStudent.id!,
+        type: 'charge',
+        amount: totalAmount,
+        description: `Purchase - Sale #${id}`,
+        date: saleDate,
+      });
+
+      // Record amount paid now (if any)
+      if (amountPaying > 0) {
+        await db.studentLedger.add({
+          studentId: selectedStudent.id!,
+          type: 'payment',
+          amount: amountPaying,
+          description: `Payment at sale #${id}`,
+          date: saleDate,
+        });
+      }
+    }
+
     setReceiptSale({ ...sale, id });
+    setReceiptStudent(selectedStudent);
+    setReceiptAmountPaid(amountPaying);
     setReceiptOpen(true);
     setCart([]);
+    setSelectedStudent(null);
+    setAmountPaying(0);
+    setStudentSearch('');
+    setStudentBalance(null);
     setDiscount(0);
     setPaymentMethod('Cash');
   };
@@ -340,6 +412,135 @@ export default function SalesPage() {
                   className="w-28 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500"
                 />
               </div>
+
+              {/* Student Search */}
+              <div className="mb-3">
+                <label className="text-sm font-medium text-gray-700">Student (optional)</label>
+
+                {/* Show selected student */}
+                {selectedStudent ? (
+                  <div className="mt-1 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium">{selectedStudent.name}</p>
+                      <p className="text-xs text-gray-500">
+                        Roll: {selectedStudent.rollNumber} | Father: {selectedStudent.fatherName}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedStudent(null);
+                        setStudentSearch('');
+                        setAmountPaying(0);
+                        setStudentBalance(null);
+                      }}
+                      className="text-red-400 hover:text-red-600 text-lg leading-none ml-2"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : (
+                  // Search input
+                  <div className="relative mt-1">
+                    <input
+                      type="text"
+                      value={studentSearch}
+                      onChange={e => {
+                        setStudentSearch(e.target.value);
+                        setShowStudentDropdown(true);
+                      }}
+                      onFocus={() => setShowStudentDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
+                      placeholder="Search by name or roll number..."
+                      className="w-full border rounded-lg px-3 py-2 text-sm"
+                    />
+                    {showStudentDropdown && studentResults && studentResults.length > 0 && (
+                      <div className="absolute z-50 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                        {studentResults.map(s => (
+                          <div
+                            key={s.id}
+                            onMouseDown={() => {
+                              setSelectedStudent(s);
+                              setStudentSearch('');
+                              setShowStudentDropdown(false);
+                            }}
+                            className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b last:border-0"
+                          >
+                            <p className="text-sm font-medium">{s.name}</p>
+                            <p className="text-xs text-gray-400">
+                              Roll: {s.rollNumber} | Father: {s.fatherName} | Class: {s.class}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {showStudentDropdown && studentSearch.length > 0 &&
+                     studentResults?.length === 0 && (
+                      <div className="absolute z-50 w-full bg-white border rounded-lg shadow mt-1 px-3 py-2 text-sm text-gray-400">
+                        No student found
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Student Account Section */}
+              {selectedStudent && (
+                <div className="bg-gray-50 rounded-lg p-3 mb-3 border">
+                  <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                    Student Account
+                  </p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Previous Balance:</span>
+                      <span className={`font-medium ${
+                        (studentBalance?.balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {formatCurrency(studentBalance?.balance ?? 0, currency)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">This Purchase:</span>
+                      <span className="font-medium">{formatCurrency(totalAmount, currency)}</span>
+                    </div>
+                    <div className="border-t pt-1 flex justify-between text-sm font-bold">
+                      <span>Total After Sale:</span>
+                      <span className="text-red-600">
+                        {formatCurrency((studentBalance?.balance ?? 0) + totalAmount, currency)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Amount Paying Now */}
+                  <div className="mt-3">
+                    <label className="text-xs font-medium text-gray-600">
+                      Amount Paying Now ({currency})
+                    </label>
+                    <input
+                      type="number"
+                      value={amountPaying}
+                      onChange={e => setAmountPaying(Number(e.target.value))}
+                      placeholder="0"
+                      className="w-full border rounded-lg px-3 py-2 text-sm mt-1"
+                      max={totalAmount}
+                    />
+                    {amountPaying < totalAmount && (
+                      <div className="mt-2 bg-yellow-50 border border-yellow-200 rounded p-2">
+                        <p className="text-xs text-yellow-700">
+                          ⚠️ Remaining {formatCurrency(totalAmount - amountPaying, currency)} will be added to student account
+                        </p>
+                      </div>
+                    )}
+                    {amountPaying >= totalAmount && (
+                      <div className="mt-2 bg-green-50 border border-green-200 rounded p-2">
+                        <p className="text-xs text-green-700">
+                          ✅ Fully paid for this purchase
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <span>Payment method</span>
                 <select
@@ -410,6 +611,19 @@ export default function SalesPage() {
                 <p className="text-slate-600">Sales receipt</p>
                 <p className="text-slate-600">{formatDate(receiptSale.date)}</p>
               </div>
+
+              {/* Student Info */}
+              {receiptStudent && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-sm font-semibold text-blue-800">
+                    Student: {receiptStudent.name} (Roll: {receiptStudent.rollNumber})
+                  </p>
+                  <p className="text-xs text-blue-600">
+                    Father: {receiptStudent.fatherName} | Class: {receiptStudent.class}
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 {receiptSale.items.map((item) => (
                   <div key={item.productId} className="flex items-center justify-between gap-3">
@@ -438,6 +652,22 @@ export default function SalesPage() {
                   <span>Payment</span>
                   <span>{receiptSale.paymentMethod}</span>
                 </div>
+
+                {/* Student Payment Info */}
+                {receiptStudent && (
+                  <div className="border-t border-slate-200 pt-2 space-y-1">
+                    <div className="flex justify-between text-slate-700">
+                      <span>Paid Now</span>
+                      <span>{formatCurrency(receiptAmountPaid, currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Remaining Balance</span>
+                      <span className="text-red-600">
+                        {formatCurrency(receiptSale.totalAmount - receiptAmountPaid, currency)}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

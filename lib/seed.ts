@@ -1,4 +1,4 @@
-import { db, Product, InventoryItem, Supplier, Expense, Purchase, Sale } from './db';
+import { db, Product, InventoryItem, Supplier, Expense, Purchase, Sale, Student, StudentLedger } from './db';
 import { DEFAULT_IMAGE } from './utils';
 
 const categories = ['Biscuits', 'Chocolates', 'Beverages', 'Snacks', 'Dairy'];
@@ -222,6 +222,70 @@ const sampleSales: Sale[] = [
   },
 ];
 
+const sampleStudents: Student[] = [
+  {
+    name: 'Ali Khan',
+    fatherName: 'Ahmad Khan',
+    rollNumber: '2024-001',
+    phone: '0312-1234567',
+    fatherPhone: '0300-7654321',
+    class: 'Class 5',
+    address: 'House 123, Street 45, City',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    name: 'Sara Ahmed',
+    fatherName: 'Muhammad Ahmed',
+    rollNumber: '2024-002',
+    phone: '0313-2345678',
+    fatherPhone: '0301-8765432',
+    class: 'Class 6',
+    address: 'House 456, Street 78, City',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    name: 'Bilal Hussain',
+    fatherName: 'Hassan Hussain',
+    rollNumber: '2024-003',
+    phone: '0314-3456789',
+    fatherPhone: '0302-9876543',
+    class: 'Class 5',
+    address: 'House 789, Street 12, City',
+    createdAt: new Date().toISOString(),
+  },
+];
+
+const sampleStudentLedger: StudentLedger[] = [
+  {
+    studentId: 1, // Ali Khan
+    type: 'charge',
+    amount: 500,
+    description: 'Opening balance',
+    date: new Date().toISOString(),
+  },
+  {
+    studentId: 1, // Ali Khan
+    type: 'purchase',
+    amount: 150,
+    description: 'Biscuits and chocolates',
+    date: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
+  },
+  {
+    studentId: 1, // Ali Khan
+    type: 'payment',
+    amount: 200,
+    description: 'Partial payment',
+    date: new Date(Date.now() - 43200000).toISOString(), // 12 hours ago
+  },
+  {
+    studentId: 2, // Sara Ahmed
+    type: 'purchase',
+    amount: 75,
+    description: 'Soda and chips',
+    date: new Date(Date.now() - 172800000).toISOString(), // 2 days ago
+  },
+];
+
 const settings = [
   { key: 'shopName', value: 'My Offline Shop' },
   { key: 'currency', value: '$' },
@@ -241,8 +305,33 @@ export async function seedDatabase() {
     lastUpdated: new Date().toISOString(),
   }));
 
+  const studentIds = await Promise.all(sampleStudents.map((student) => db.students.add(student)));
+  const studentLedgerWithIds = [
+    {
+      ...sampleStudentLedger[0],
+      studentId: studentIds[0], // Ali Khan
+    },
+    {
+      ...sampleStudentLedger[1],
+      studentId: studentIds[0], // Ali Khan
+    },
+    {
+      ...sampleStudentLedger[2],
+      studentId: studentIds[0], // Ali Khan
+    },
+    {
+      ...sampleStudentLedger[3],
+      studentId: studentIds[1], // Sara Ahmed
+    },
+  ];
+
   await Promise.all([
     db.inventory.bulkAdd(inventoryItems),
+    db.suppliers.bulkAdd(sampleSuppliers),
+    db.expenses.bulkAdd(sampleExpenses),
+    db.purchases.bulkAdd(samplePurchases),
+    db.sales.bulkAdd(sampleSales),
+    db.studentLedger.bulkAdd(studentLedgerWithIds),
     db.settings.bulkPut(settings),
   ]);
 }

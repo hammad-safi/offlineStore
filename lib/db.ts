@@ -48,6 +48,7 @@ export interface Sale {
   totalAmount: number;
   discount: number;
   paymentMethod: string;
+  studentId?: number | null;
   date: string;
 }
 
@@ -69,6 +70,27 @@ export interface Expense {
   note?: string;
 }
 
+export interface Student {
+  id?: number;
+  name: string;
+  fatherName: string;
+  rollNumber: string;
+  phone: string;
+  fatherPhone: string;
+  class: string;
+  address: string;
+  createdAt: string;
+}
+
+export interface StudentLedger {
+  id?: number;
+  studentId: number;
+  type: 'charge' | 'payment' | 'purchase';
+  amount: number;
+  description: string;
+  date: string;
+}
+
 export interface Setting {
   key: string;
   value: string;
@@ -81,17 +103,21 @@ class ShopDB extends Dexie {
   sales!: Table<Sale, number>;
   suppliers!: Table<Supplier, number>;
   expenses!: Table<Expense, number>;
+  students!: Table<Student, number>;
+  studentLedger!: Table<StudentLedger, number>;
   settings!: Table<Setting, string>;
 
   constructor() {
     super('ShopERP');
-    this.version(1).stores({
+    this.version(3).stores({
       products: '++id,name,category,barcode,price,costPrice,unit,createdAt',
       inventory: '++id,productId,quantity,lowStockThreshold,lastUpdated',
       purchases: '++id,productId,productName,quantity,costPrice,totalCost,supplier,date',
-      sales: '++id,date,totalAmount,discount,paymentMethod',
+      sales: '++id,date,totalAmount,discount,paymentMethod,studentId',
       suppliers: '++id,name,phone,email,address,createdAt',
       expenses: '++id,title,amount,category,date',
+      students: '++id, name, fatherName, rollNumber, phone, fatherPhone, class, address, createdAt',
+      studentLedger: '++id, studentId, type, amount, description, date',
       settings: 'key',
     });
   }

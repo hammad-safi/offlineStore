@@ -15,6 +15,7 @@ import {
   BarChart4,
   Settings,
   X,
+  GraduationCap,
 } from 'lucide-react';
 
 const links = [
@@ -24,6 +25,7 @@ const links = [
   { href: '/sales', label: 'Sales', icon: ShoppingCart },
   { href: '/purchases', label: 'Purchases', icon: Truck },
   { href: '/suppliers', label: 'Suppliers', icon: Users },
+  { href: '/students', label: 'Students', icon: GraduationCap },
   { href: '/expenses', label: 'Expenses', icon: Wallet },
   { href: '/reports', label: 'Reports', icon: BarChart4 },
   { href: '/settings', label: 'Settings', icon: Settings },
